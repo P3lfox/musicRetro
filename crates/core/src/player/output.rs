@@ -8,7 +8,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use cpal::{SampleFormat, Stream, StreamConfig, SupportedStreamConfig};
+use cpal::{ErrorKind, SampleFormat, Stream, StreamConfig, SupportedStreamConfig};
 use rtrb::{Producer, RingBuffer};
 
 use super::error::{PlayerError, Result};
@@ -105,7 +105,9 @@ impl Output {
             },
             move |err| {
                 eprintln!("audio stream error: {err}");
-                err_shared.failed.store(true, Ordering::Relaxed);
+                if is_fatal_stream_error(err.kind()) {
+                    err_shared.failed.store(true, Ordering::Relaxed);
+                }
             },
             None,
         )?;
@@ -146,6 +148,17 @@ impl Output {
     }
 }
 
+/// Whether a stream error means the stream is dead. cpal also reports
+/// errors it recovers from while the stream keeps running (xruns, device
+/// suspend, automatic re-routing); those must not stop playback. A stream
+/// that dies without a fatal error is caught by the stall watchdog.
+fn is_fatal_stream_error(kind: ErrorKind) -> bool {
+    matches!(
+        kind,
+        ErrorKind::DeviceNotAvailable | ErrorKind::HostUnavailable | ErrorKind::StreamInvalidated
+    )
+}
+
 /// Picks an `f32` output config, preferring the exact sample rate and
 /// channel count of the track.
 fn pick_config(
@@ -169,4 +182,25 @@ fn pick_config(
         .or_else(|| at_rate(Some(2)))
         .or_else(|| at_rate(None))
         .ok_or(PlayerError::UnsupportedSampleRate(sample_rate))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_fatal_stream_error;
+    use cpal::ErrorKind;
+
+    #[test]
+    fn device_and_host_loss_are_fatal() {
+        assert!(is_fatal_stream_error(ErrorKind::DeviceNotAvailable));
+        assert!(is_fatal_stream_error(ErrorKind::HostUnavailable));
+        assert!(is_fatal_stream_error(ErrorKind::StreamInvalidated));
+    }
+
+    #[test]
+    fn recoverable_errors_keep_playing() {
+        assert!(!is_fatal_stream_error(ErrorKind::Xrun));
+        assert!(!is_fatal_stream_error(ErrorKind::DeviceChanged));
+        assert!(!is_fatal_stream_error(ErrorKind::RealtimeDenied));
+        assert!(!is_fatal_stream_error(ErrorKind::BackendError));
+    }
 }
