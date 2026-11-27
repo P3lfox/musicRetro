@@ -93,6 +93,9 @@ fn main() {
                 PlayerEvent::TrackError { path, message } => {
                     eprintln!("  ✕ {}: {message}", display_name(&path));
                 }
+                PlayerEvent::OutputLost { message } => {
+                    eprintln!("  ✕ output lost: {message} (press p to retry)");
+                }
                 PlayerEvent::QueueEnded => {
                     println!("■ queue ended");
                     return;
@@ -111,8 +114,13 @@ fn main() {
             Some("p") => Command::TogglePause,
             Some("n") => Command::Next,
             Some("b") => Command::Previous,
-            Some("s") => match parts.next().and_then(|s| s.parse::<f64>().ok()) {
-                Some(secs) if secs >= 0.0 => Command::Seek(Duration::from_secs_f64(secs)),
+            Some("s") => match parts
+                .next()
+                .and_then(|s| s.parse::<f64>().ok())
+                .and_then(|secs| Duration::try_from_secs_f64(secs).ok())
+            {
+                // Rejects negative, NaN, and infinite input instead of panicking.
+                Some(position) => Command::Seek(position),
                 _ => {
                     println!("  usage: s <seconds>");
                     continue;

@@ -1,12 +1,13 @@
 //! Player engine: runs decoding on its own thread and talks to callers
 //! through channels, so the UI never blocks audio and vice versa.
 
+use std::cell::Cell;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU8, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::thread::JoinHandle;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use super::decoder::Decoder;
 use super::error::{PlayerError, Result};
@@ -14,12 +15,15 @@ use super::info::TrackInfo;
 use super::output::{Output, OutputShared};
 use super::queue::{Queue, RepeatMode};
 use super::remix::remix_into;
+use super::watchdog::StallDetector;
 
 /// Going "previous" after this much playback restarts the current track.
 const RESTART_THRESHOLD: Duration = Duration::from_secs(3);
 /// How long the engine waits for commands while the device buffer is full;
 /// well below the 0.5 s buffer, so playback never underruns.
 const FEED_INTERVAL: Duration = Duration::from_millis(40);
+/// A device that consumes no audio for this long while playing is treated as lost.
+const STALL_TIMEOUT: Duration = Duration::from_secs(2);
 
 #[derive(Debug, Clone)]
 pub enum Command {
@@ -55,6 +59,11 @@ pub enum PlayerEvent {
     StateChanged(PlaybackState),
     Seeked(Duration),
     QueueEnded,
+    /// The output device failed or disappeared (e.g. DAC unplugged);
+    /// playback stopped and the queue position is kept.
+    OutputLost {
+        message: String,
+    },
     /// A track could not be played; the engine skips to the next one.
     TrackError {
         path: PathBuf,
@@ -181,6 +190,8 @@ struct Engine {
     queue: Queue,
     active: Option<Active>,
     volume: f32,
+    /// `Cell` so state changes (`&self`) can reset it.
+    stall: Cell<StallDetector>,
 }
 
 impl Engine {
@@ -192,6 +203,7 @@ impl Engine {
             queue: Queue::default(),
             active: None,
             volume: 1.0,
+            stall: Cell::new(StallDetector::new(STALL_TIMEOUT)),
         }
     }
 
@@ -220,6 +232,9 @@ impl Engine {
             }
 
             if !self.feed() {
+                if self.output_lost() {
+                    continue;
+                }
                 // Device buffer is full (or draining): wait briefly for commands.
                 match self.commands.recv_timeout(FEED_INTERVAL) {
                     Ok(Command::Shutdown) | Err(RecvTimeoutError::Disconnected) => return,
@@ -429,6 +444,7 @@ impl Engine {
         match result {
             Ok(reached) => {
                 self.active = Some(active);
+                self.reset_stall();
                 self.emit(PlayerEvent::Seeked(reached));
             }
             Err(e) => {
@@ -487,7 +503,44 @@ impl Engine {
         self.status.state()
     }
 
+    /// Stops playback if the device reported an error or silently stopped
+    /// consuming audio. Returns `true` if playback was stopped.
+    fn output_lost(&mut self) -> bool {
+        let (Some(active), Some(shared)) = (&self.active, self.status.output()) else {
+            return false;
+        };
+        let failed = shared.has_failed();
+        let stalled = !active.output.is_drained() && {
+            let mut detector = self.stall.get();
+            let stalled =
+                detector.observe(shared.frames_played.load(Ordering::Relaxed), Instant::now());
+            self.stall.set(detector);
+            stalled
+        };
+        if !failed && !stalled {
+            return false;
+        }
+        self.stop();
+        let message = if failed {
+            "audio device reported an error"
+        } else {
+            "audio device stopped consuming audio"
+        };
+        self.emit(PlayerEvent::OutputLost {
+            message: message.into(),
+        });
+        true
+    }
+
+    fn reset_stall(&self) {
+        let mut detector = self.stall.get();
+        detector.reset();
+        self.stall.set(detector);
+    }
+
     fn set_state(&self, state: PlaybackState) {
+        // Pauses and new streams legitimately freeze the frame counter.
+        self.reset_stall();
         if self.status.state() != state {
             self.status.state.store(state as u8, Ordering::Relaxed);
             self.emit(PlayerEvent::StateChanged(state));

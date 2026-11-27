@@ -5,7 +5,7 @@
 //! volume 1.0). On Windows, WASAPI converts unsupported rates itself.
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{SampleFormat, Stream, StreamConfig, SupportedStreamConfig};
@@ -23,6 +23,8 @@ pub struct OutputShared {
     pub frames_played: AtomicU64,
     /// Linear gain as `f32` bits.
     volume_bits: AtomicU32,
+    /// Set by cpal's error callback (device unplugged, backend reset, ...).
+    failed: AtomicBool,
 }
 
 impl OutputShared {
@@ -30,7 +32,13 @@ impl OutputShared {
         Self {
             frames_played: AtomicU64::new(0),
             volume_bits: AtomicU32::new(volume.to_bits()),
+            failed: AtomicBool::new(false),
         }
+    }
+
+    /// True once the device reported an error; the stream is unusable.
+    pub fn has_failed(&self) -> bool {
+        self.failed.load(Ordering::Relaxed)
     }
 
     pub fn volume(&self) -> f32 {
@@ -68,6 +76,7 @@ impl Output {
 
         shared.frames_played.store(0, Ordering::Relaxed);
         let cb_shared = Arc::clone(&shared);
+        let err_shared = Arc::clone(&shared);
         let ch = usize::from(out_channels).max(1);
 
         let stream = device.build_output_stream::<f32, _, _>(
@@ -94,7 +103,10 @@ impl Output {
                     .frames_played
                     .fetch_add((available / ch) as u64, Ordering::Relaxed);
             },
-            |err| eprintln!("audio stream error: {err}"),
+            move |err| {
+                eprintln!("audio stream error: {err}");
+                err_shared.failed.store(true, Ordering::Relaxed);
+            },
             None,
         )?;
 

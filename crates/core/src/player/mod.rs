@@ -10,6 +10,7 @@ pub mod info;
 mod output;
 pub mod queue;
 pub mod remix;
+mod watchdog;
 
 pub use decoder::Decoder;
 pub use engine::{Command, PlaybackState, Player, PlayerEvent};
