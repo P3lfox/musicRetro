@@ -1,0 +1,70 @@
+// Top-right status bar: "M/D h:mmAM/PM" + pixelated battery.
+
+export global Palette {
+    out property <color> text: #d8e0d4;
+    out property <color> dim: #8a968a;
+    out property <color> charge: #9fd8c0;
+}
+
+component PixelBattery inherits Rectangle {
+    in property <int> cells: 0;
+    in property <bool> charging: false;
+    property <int> total-cells: 4;
+
+    width: 30px;
+    height: 14px;
+
+    // Body outline.
+    Rectangle {
+        x: 0;
+        width: parent.width - 3px;
+        height: parent.height;
+        border-width: 2px;
+        border-color: Palette.text;
+
+        HorizontalLayout {
+            padding: 3px;
+            spacing: 1px;
+            for i in root.total-cells: Rectangle {
+                background: i < root.cells
+                    ? (root.charging ? Palette.charge : Palette.text)
+                    : transparent;
+            }
+        }
+    }
+
+    // Terminal nub.
+    Rectangle {
+        x: parent.width - 3px;
+        y: (parent.height - self.height) / 2;
+        width: 3px;
+        height: 6px;
+        background: Palette.text;
+    }
+}
+
+export component StatusBar inherits HorizontalLayout {
+    in property <string> clock-text;
+    in property <bool> battery-visible;
+    in property <int> battery-cells;
+    in property <bool> battery-charging;
+
+    spacing: 12px;
+    alignment: end;
+
+    Text {
+        text: root.clock-text;
+        color: Palette.text;
+        font-size: 16px;
+        font-family: "monospace";
+        vertical-alignment: center;
+    }
+
+    if root.battery-visible: VerticalLayout {
+        alignment: center;
+        PixelBattery {
+            cells: root.battery-cells;
+            charging: root.battery-charging;
+        }
+    }
+}

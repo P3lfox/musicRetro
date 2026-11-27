@@ -1,0 +1,54 @@
+// M0 skeleton: static background + status bar (clock + pixel battery).
+
+import { StatusBar } from "status-bar.slint";
+
+export component AppWindow inherits Window {
+    title: "Reproductor Retro";
+    preferred-width: 1280px;
+    preferred-height: 720px;
+    min-width: 640px;
+    min-height: 360px;
+    background: #0b0f0c;
+
+    in property <string> clock-text: "";
+    in property <bool> battery-visible: false;
+    in property <int> battery-cells: 0;
+    in property <bool> battery-charging: false;
+
+    // Static night-sky background in desaturated olive / cyan / amber tones.
+    Rectangle {
+        background: @linear-gradient(180deg, #0d1a1c 0%, #1b2a22 55%, #2c2a1a 100%);
+    }
+
+    // Placeholder skyline silhouette; replaced by themed artwork in M6/M8.
+    Path {
+        y: parent.height * 0.45;
+        width: parent.width;
+        height: parent.height * 0.55;
+        viewbox-width: 100;
+        viewbox-height: 50;
+        fill: #0a1210;
+        commands: "M 0 50 L 0 30 L 6 30 L 6 18 L 12 18 L 12 26 L 18 26 L 18 10 L 22 10 L 22 6 L 24 6 L 24 10 L 28 10 L 28 28 L 34 28 L 34 20 L 42 20 L 42 32 L 48 32 L 48 14 L 54 14 L 54 24 L 60 24 L 60 8 L 63 8 L 63 4 L 65 4 L 65 8 L 68 8 L 68 30 L 74 30 L 74 22 L 82 22 L 82 16 L 88 16 L 88 34 L 94 34 L 94 26 L 100 26 L 100 50 Z";
+    }
+
+    // Elevated highway band with an amber light line.
+    Rectangle {
+        y: parent.height * 0.78;
+        height: 10px;
+        background: #121a16;
+        Rectangle {
+            y: 0;
+            height: 1px;
+            background: #c8963c66;
+        }
+    }
+
+    StatusBar {
+        x: parent.width - self.width - 24px;
+        y: 16px;
+        clock-text: root.clock-text;
+        battery-visible: root.battery-visible;
+        battery-cells: root.battery-cells;
+        battery-charging: root.battery-charging;
+    }
+}

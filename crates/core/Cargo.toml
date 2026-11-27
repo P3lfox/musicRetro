@@ -1,0 +1,13 @@
+[package]
+name = "retro-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+chrono = { version = "0.4.45", default-features = false, features = ["clock"] }
+
+# Battery status on Windows via GetSystemPowerStatus (tiny, no runtime).
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61.2", features = ["Win32_System_Power"] }
