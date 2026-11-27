@@ -1,0 +1,53 @@
+name: Release
+
+# Builds the Windows executable and publishes it to GitHub Releases.
+# Trigger: push a tag like `v0.1.0`, or run manually from the Actions tab.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  BIN_NAME: app-desktop
+  PKG_NAME: reproductor-retro-windows-x64
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build release
+        run: cargo build --release --locked -p app-desktop --target x86_64-pc-windows-msvc
+
+      - name: Package portable zip (exe + assets)
+        shell: pwsh
+        run: |
+          $out = "dist/$env:PKG_NAME"
+          New-Item -ItemType Directory -Force -Path $out | Out-Null
+          Copy-Item "target/x86_64-pc-windows-msvc/release/$env:BIN_NAME.exe" "$out/ReproductorRetro.exe"
+          Copy-Item -Recurse assets "$out/assets"
+          Get-ChildItem -Recurse -Filter .gitkeep "$out/assets" | Remove-Item
+          Compress-Archive -Path "$out/*" -DestinationPath "dist/$env:PKG_NAME.zip"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.PKG_NAME }}
+          path: dist/${{ env.PKG_NAME }}.zip
+
+      - name: Publish GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/${{ env.PKG_NAME }}.zip
+          generate_release_notes: true
